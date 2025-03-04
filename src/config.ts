@@ -13,6 +13,7 @@ const {
   COMFY_HOME = "/opt/ComfyUI",
   COMFYUI_PORT_HOST = "8188",
   DIRECT_ADDRESS = "127.0.0.1",
+  BASE_URL = "http://127.0.0.1:3000",
   HOST = "::",
   INPUT_DIR,
   LOG_LEVEL = "info",
@@ -31,6 +32,11 @@ const {
   SYSTEM_WEBHOOK_EVENTS,
   WARMUP_PROMPT_FILE,
   WORKFLOW_DIR = "/workflows",
+//   HUAWEI_OBS_ACCESS_KEY_ID,
+//   HUAWEI_OBS_SECRET_ACCESS_KEY,
+//   HUAWEI_OBS_SERVER,
+//   HUAWEI_OBS_BUCKET,
+//   HUAWEI_OBS_CDN = "",
 } = process.env;
 
 fs.mkdirSync(WORKFLOW_DIR, { recursive: true });
@@ -230,6 +236,12 @@ const config = {
   wrapperHost: HOST,
   wrapperPort: port,
   wsClientId,
+  baseUrl: BASE_URL,
+//   HUAWEI_OBS_ACCESS_KEY_ID: HUAWEI_OBS_ACCESS_KEY_ID,
+//   HUAWEI_OBS_SECRET_ACCESS_KEY: HUAWEI_OBS_SECRET_ACCESS_KEY,
+//   HUAWEI_OBS_SERVER: HUAWEI_OBS_SERVER,
+//   HUAWEI_OBS_BUCKET: HUAWEI_OBS_BUCKET,
+//   HUAWEI_OBS_CDN: HUAWEI_OBS_CDN,
 };
 
 const modelDir = MODEL_DIR ?? path.join(comfyDir, "models");

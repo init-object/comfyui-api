@@ -132,8 +132,8 @@ export type PromptRequest = z.infer<typeof PromptRequestSchema>;
 
 export const PromptResponseSchema = z.object({
   id: z.string(),
-  prompt: z.record(ComfyNodeSchema),
-  images: z.array(z.string()).optional(),
+  prompt: z.record(ComfyNodeSchema).optional(),
+  videos: z.array(z.string()).optional(),
   filenames: z.array(z.string()).optional(),
   webhook: z.string().optional(),
   convert_output: OutputConversionOptionsSchema.optional(),

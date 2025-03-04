@@ -1,6 +1,9 @@
 import Fastify from "fastify";
 import fastifySwagger from "@fastify/swagger";
 import fastifySwaggerUI from "@fastify/swagger-ui";
+import cors from '@fastify/cors';
+import fs from 'fs';
+import { pipeline } from 'stream/promises'
 import {
   jsonSchemaTransform,
   serializerCompiler,
@@ -209,6 +212,7 @@ server.after(() => {
        */
       let hasSaveImage = false;
       const loadImageNodes = new Set<string>(["LoadImage"]);
+      const LoadAudioNodes = new Set<string>(["LoadAudio"]);
       const loadDirectoryOfImagesNodes = new Set<string>(["VHS_LoadImages"]);
       for (const nodeId in prompt) {
         const node = prompt[nodeId];
@@ -279,8 +283,21 @@ server.after(() => {
               message: "Failed to download images to local directory",
             });
           }
-        }
-      }
+        } else if (
+            LoadAudioNodes.has(node.class_type) &&
+            typeof node.inputs.audio === "string"
+          ) {
+            const audioInput = node.inputs.audio;
+            try {
+              node.inputs.audio = await processImage(audioInput, app.log);
+            } catch (e: any) {
+              return reply.code(400).send({
+                error: e.message,
+                location: `prompt.${nodeId}.inputs.audio`,
+              });
+            }
+          } 
+      } 
 
       /**
        * If the prompt has no outputs, there's no point in running it.
@@ -421,7 +438,7 @@ server.after(() => {
          * If the user has not provided a webhook, we wait for the images to be generated
          * and then send them back in the response.
          */
-        const images: string[] = [];
+        const videos: string[] = [];
         const filenames: string[] = [];
 
         /**
@@ -429,36 +446,85 @@ server.after(() => {
          */
         const allOutputs = await runPromptAndGetOutputs(id, prompt, app.log);
         for (const originalFilename in allOutputs) {
-          let fileBuffer = allOutputs[originalFilename];
           let filename = originalFilename;
+        //   let obsPath = path.join("comfyui", originalFilename);
+        //   await uploadFile(obsPath, path.join(config.outputDir, originalFilename));
 
-          if (convert_output) {
-            try {
-              fileBuffer = await convertImageBuffer(fileBuffer, convert_output);
-              /**
-               * If the user has provided an output format, we need to update the filename
-               */
-              filename = originalFilename.replace(
-                /\.[^/.]+$/,
-                `.${convert_output.format}`
-              );
-            } catch (e: any) {
-              app.log.warn(`Failed to convert image: ${e.message}`);
-            }
-          }
-
-          const base64File = fileBuffer.toString("base64");
-          images.push(base64File);
+          videos.push(config.baseUrl + "/video/" + originalFilename);
+          
           filenames.push(filename);
 
           // Remove the file after reading
-          fsPromises.unlink(path.join(config.outputDir, originalFilename));
+        //   fsPromises.unlink(path.join(config.outputDir, originalFilename));
         }
 
-        return reply.send({ id, prompt, images, filenames });
+        return reply.send({ id, videos, filenames });
       }
     }
   );
+
+  app.get<{ Params: { filename: string } }>('/video/:filename', (request, reply) => {
+    const videoPath = path.join(config.outputDir, request.params.filename);
+    const { size } = fs.statSync(videoPath);
+    const { range } = request.headers;
+  
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : size - 1;
+      const chunkSize = end - start + 1;
+  
+      reply.header('Content-Range', `bytes ${start}-${end}/${size}`);
+      reply.code(206).type('video/mp4');
+  
+      const stream = fs.createReadStream(videoPath, { start, end });
+      reply.send(stream);
+    } else {
+      reply.header('Content-Length', size);
+      reply.type('video/mp4');
+      const stream = fs.createReadStream(videoPath);
+      reply.send(stream);
+    }
+  });
+
+  app.get<{ Params: { filename: string } }>('/comfyui/output/:filename', async (request, reply) => {
+    const requestedFilename = request.params.filename;
+    
+    // 防止路径遍历攻击
+    const filePath = path.join(config.outputDir, requestedFilename);
+    if (!filePath.startsWith(config.outputDir)) {
+      return reply.code(403).send('Forbidden path');
+    }
+  
+    try {
+        // 使用 fs.promises 替代回调
+        await fs.promises.access(filePath, fs.constants.F_OK)
+        
+        // 设置响应头
+        reply.header('Content-Disposition', `attachment; filename="${encodeURIComponent(requestedFilename)}"`)
+          .type('application/octet-stream')
+  
+        // 创建可读流
+        const stream = fs.createReadStream(filePath)
+        
+        // 使用 pipeline 管理流生命周期
+        await pipeline(
+          stream,
+          reply.raw  // 直接通过 Fastify 的底层响应发送
+        )
+  
+        // 显式结束响应
+        return reply;
+      } catch (err) {
+        // 统一错误处理
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          return reply.code(404).send({ error: '文件不存在' })
+        }
+        return reply.code(500).send({ error: '服务器内部错误' })
+      }
+  });
+  
+  
 
   // Recursively build the route tree from workflows
   const walk = (tree: WorkflowTree, route = "/workflow") => {
@@ -576,6 +642,26 @@ async function launchComfyUIAndAPIServerAndWaitForWarmup() {
   await waitForComfyUIToStart(server.log);
   server.log.info(`ComfyUI API ${config.comfyVersion} started.`);
   if (!wasEverWarm) {
+    // 注册 CORS 插件
+    await server.register(cors, {
+        // 允许所有来源（生产环境不推荐）
+        origin: '*',
+        
+        // 允许的 HTTP 方法
+        methods: ['GET', 'POST', 'PUT', 'DELETE'],
+        
+        // 允许的请求头
+        allowedHeaders: ['Content-Type', 'Authorization'],
+        
+        // 暴露的响应头
+        exposedHeaders: ['X-Custom-Header'],
+        
+        // 是否允许携带凭据
+        credentials: true,
+        
+        // 预检请求缓存时间（秒）
+        maxAge: 86400
+    });
     await server.ready();
     server.swagger();
     // Start the server
